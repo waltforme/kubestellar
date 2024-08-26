@@ -22,6 +22,7 @@ import (
 	"fmt"
 
 	"k8s.io/apimachinery/pkg/api/errors"
+	"k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/runtime"
@@ -125,6 +126,12 @@ func updateObjectStatus(ctx context.Context, objectIdentifier util.ObjectIdentif
 	// set the status and update the object
 	unstrObj.Object["status"] = status
 
+	managers, err := listFieldManagers(ctx, obj)
+	if err != nil {
+		return err
+	}
+	logger.V(5).Info("Field managers before status update", "managers", managers)
+
 	if objectIdentifier.ObjectName.Namespace == "" {
 		_, err = wdsDynClient.Resource(gvr).UpdateStatus(ctx, unstrObj, metav1.UpdateOptions{})
 	} else {
@@ -140,7 +147,30 @@ func updateObjectStatus(ctx context.Context, objectIdentifier util.ObjectIdentif
 		return fmt.Errorf("failed to update status: %w", err)
 	}
 
+	managers, err = listFieldManagers(ctx, obj)
+	if err != nil {
+		return err
+	}
+	logger.V(5).Info("Field managers after status update", "managers", managers)
+
 	return nil
+}
+
+func listFieldManagers(ctx context.Context, obj runtime.Object) ([]string, error) {
+	logger := klog.FromContext(ctx)
+
+	accessor, err := meta.Accessor(obj)
+	if err != nil {
+		return nil, fmt.Errorf("error accessing metadata: %w", err)
+	}
+
+	managers := []string{}
+	managedFields := accessor.GetManagedFields()
+	for _, field := range managedFields {
+		managers = append(managers, field.Manager)
+		logger.V(5).Info("Managed field", "manager", field.Manager, "operation", field.Operation, "time", field.Time)
+	}
+	return managers, nil
 }
 
 func runtimeObjectToWorkStatus(obj runtime.Object) (*workStatus, error) {
